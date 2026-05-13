@@ -8,10 +8,14 @@ class TaskFairApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return const MaterialApp(
+    return MaterialApp(
       title: 'TaskFair',
       debugShowCheckedModeBanner: false,
-      home: LoginPage(),
+      theme: ThemeData.dark().copyWith(
+        scaffoldBackgroundColor: const Color(0xFF0A0F0A),
+        colorScheme: const ColorScheme.dark(primary: Color(0xFF22C55E)),
+      ),
+      home: const LoginPage(),
     );
   }
 }
