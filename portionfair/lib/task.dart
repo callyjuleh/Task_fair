@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'rating_page.dart';
 
 // ─── Green Theme Colors ───────────────────────────────────────────────────────
 const _kBg = Color(0xFF0A0F0A);
@@ -79,23 +80,13 @@ class _TaskSetupPageState extends State<TaskSetupPage> {
       );
       return;
     }
-    // TODO: Navigate to RatingPage, passing members + tasks
-    // Navigator.push(
-    //   context,
-    //   MaterialPageRoute(
-    //     builder: (_) => RatingPage(
-    //       groupName: _groupNameController.text.trim(),
-    //       members: List.from(_members),
-    //       tasks: List.from(_tasks),
-    //     ),
-    //   ),
-    // );
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        backgroundColor: _kGreenDark,
-        content: Text(
-          'Group "${_groupNameController.text.trim()}" ready — ${_members.length} members, ${_tasks.length} tasks.',
-          style: const TextStyle(color: Colors.white),
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => RatingPage(
+          groupName: _groupNameController.text.trim(),
+          members: List.from(_members),
+          tasks: List.from(_tasks),
         ),
       ),
     );
@@ -144,7 +135,6 @@ class _TaskSetupPageState extends State<TaskSetupPage> {
                       ),
                     ),
                     const SizedBox(height: 24),
-                    // Two-column layout on wider screens; stacked on narrow
                     LayoutBuilder(
                       builder: (ctx, constraints) {
                         final wide = constraints.maxWidth > 560;
@@ -174,7 +164,6 @@ class _TaskSetupPageState extends State<TaskSetupPage> {
           ],
         ),
       ),
-      // ── Bottom action bar ──────────────────────────────────────────────────
       bottomNavigationBar: _buildBottomBar(context),
     );
   }

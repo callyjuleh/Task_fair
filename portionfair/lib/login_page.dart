@@ -41,7 +41,7 @@ class _LoginPageState extends State<LoginPage> {
       return;
     }
 
-    // TODO: Replace with actual authentication logic
+    // Navigate to HomePage after login
     Navigator.pushReplacement(
       context,
       MaterialPageRoute(builder: (_) => const HomePage()),
@@ -84,7 +84,6 @@ class _LoginPageState extends State<LoginPage> {
     );
   }
 
-  // ── Logo ──────────────────────────────────────────────────────────────────
   Widget _buildLogo() {
     return Row(
       children: [
@@ -111,12 +110,11 @@ class _LoginPageState extends State<LoginPage> {
     );
   }
 
-  // ── Heading ───────────────────────────────────────────────────────────────
   Widget _buildHeading() {
-    return Column(
+    return const Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text(
+        Text(
           'Welcome back',
           style: TextStyle(
             color: _kTextPrimary,
@@ -125,8 +123,8 @@ class _LoginPageState extends State<LoginPage> {
             letterSpacing: -0.8,
           ),
         ),
-        const SizedBox(height: 6),
-        const Text(
+        SizedBox(height: 6),
+        Text(
           'Sign in to continue',
           style: TextStyle(color: _kTextMuted, fontSize: 15),
         ),
@@ -134,7 +132,6 @@ class _LoginPageState extends State<LoginPage> {
     );
   }
 
-  // ── Username Field ────────────────────────────────────────────────────────
   Widget _buildUsernameField() {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -179,7 +176,6 @@ class _LoginPageState extends State<LoginPage> {
     );
   }
 
-  // ── Password Field ────────────────────────────────────────────────────────
   Widget _buildPasswordField() {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -236,7 +232,6 @@ class _LoginPageState extends State<LoginPage> {
     );
   }
 
-  // ── Login Button ──────────────────────────────────────────────────────────
   Widget _buildLoginButton() {
     return GestureDetector(
       onTap: _handleLogin,
@@ -271,7 +266,6 @@ class _LoginPageState extends State<LoginPage> {
     );
   }
 
-  // ── Footer ────────────────────────────────────────────────────────────────
   Widget _buildFooter() {
     return Center(
       child: RichText(
