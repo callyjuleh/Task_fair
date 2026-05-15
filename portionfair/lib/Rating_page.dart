@@ -1,12 +1,14 @@
 import 'package:flutter/material.dart';
 import 'computing_page.dart';
-import 'task.dart'; 
+
+import 'task.dart';
 
 class RatingPage extends StatefulWidget {
   final String groupName;
   final List<String> members;
   final List<String> tasks;
-  final DateTime deadline;
+  final DateTime? deadline; // nullable
+  final List<int> taskDifficulties; // from LeaderRatingPage
 
   const RatingPage({
     super.key,
@@ -14,6 +16,7 @@ class RatingPage extends StatefulWidget {
     required this.members,
     required this.tasks,
     required this.deadline,
+    required this.taskDifficulties,
   });
 
   @override
@@ -27,12 +30,15 @@ class _RatingPageState extends State<RatingPage> {
   @override
   void initState() {
     super.initState();
-    _ratings = List.generate(widget.members.length, (_) => List.filled(widget.tasks.length, 0));
+    _ratings = List.generate(
+      widget.members.length,
+      (_) => List.filled(widget.tasks.length, 0),
+    );
   }
 
-  int get _ratedCount => _ratings[_currentMemberIndex].where((r) => r > 0).length;
+  int get _ratedCount =>
+      _ratings[_currentMemberIndex].where((r) => r > 0).length;
   bool get _allRated => _ratings[_currentMemberIndex].every((r) => r > 0);
-  bool get _allMembersSubmitted => _ratings.every((m) => m.every((r) => r > 0));
 
   void _setRating(int taskIndex, int value) {
     setState(() => _ratings[_currentMemberIndex][taskIndex] = value);
@@ -40,30 +46,71 @@ class _RatingPageState extends State<RatingPage> {
 
   void _submitAndNext() {
     if (!_allRated) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-        backgroundColor: kPrimary,
-        content: Text('Please rate all tasks before submitting.', style: TextStyle(color: Colors.white)),
-      ));
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          backgroundColor: kPrimary,
+          content: Text(
+            'Please rate all tasks before submitting.',
+            style: TextStyle(color: Colors.white),
+          ),
+        ),
+      );
       return;
     }
 
     if (_currentMemberIndex < widget.members.length - 1) {
       setState(() => _currentMemberIndex++);
     } else {
-      Navigator.push(context, MaterialPageRoute(builder: (_) => ComputingPage(
-        groupName: widget.groupName,
-        members: widget.members,
-        tasks: widget.tasks,
-        ratings: _ratings,
-        deadline: widget.deadline,
-      )));
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => ComputingPage(
+            groupName: widget.groupName,
+            members: widget.members,
+            tasks: widget.tasks,
+            ratings: _ratings,
+            deadline: widget.deadline,
+            taskDifficulties: widget.taskDifficulties,
+          ),
+        ),
+      );
     }
+  }
+
+  // ── Difficulty helpers ────────────────────────────────────────────
+  Color _difficultyColor(int val) {
+    const colors = [
+      Color(0xFF2D9E7E), // 1 Very Easy
+      Color(0xFF7EC8E3), // 2 Easy
+      Color(0xFFFFD166), // 3 Moderate
+      Color(0xFFFF8C69), // 4 Hard
+      Color(0xFFB5A4E8), // 5 Very Hard
+    ];
+    return colors[(val - 1).clamp(0, 4)];
+  }
+
+  String _difficultyLabel(int val) {
+    const labels = ['Very Easy', 'Easy', 'Moderate', 'Hard', 'Very Hard'];
+    return labels[(val - 1).clamp(0, 4)];
+  }
+
+  String _ratingLabel(int rating) {
+    const labels = [
+      '',
+      'Beginner',
+      'Elementary',
+      'Intermediate',
+      'Advanced',
+      'Expert',
+    ];
+    return labels[rating.clamp(0, 5)];
   }
 
   @override
   Widget build(BuildContext context) {
     final member = widget.members[_currentMemberIndex];
     final isLast = _currentMemberIndex == widget.members.length - 1;
+    final isLeader = _currentMemberIndex == 0;
 
     return Scaffold(
       backgroundColor: kBg,
@@ -78,12 +125,60 @@ class _RatingPageState extends State<RatingPage> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Text('Skill Rating', style: TextStyle(color: kTextDark, fontSize: 24, fontWeight: FontWeight.w900, letterSpacing: -0.6)),
+                    const Text(
+                      'Skill Rating ⭐',
+                      style: TextStyle(
+                        color: kTextDark,
+                        fontSize: 24,
+                        fontWeight: FontWeight.w900,
+                        letterSpacing: -0.6,
+                      ),
+                    ),
                     const SizedBox(height: 6),
-                    const Text('Each member rates their skill level (1–5) for every task independently.', style: TextStyle(color: kTextMid, fontSize: 13, height: 1.5)),
+                    const Text(
+                      'Each member rates their own skill level (1–5) for every task independently.',
+                      style: TextStyle(
+                        color: kTextMid,
+                        fontSize: 13,
+                        height: 1.5,
+                      ),
+                    ),
                     const SizedBox(height: 20),
                     _buildMemberTabs(),
-                    const SizedBox(height: 20),
+                    // Leader indicator
+                    if (isLeader) ...[
+                      const SizedBox(height: 12),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 14,
+                          vertical: 10,
+                        ),
+                        decoration: BoxDecoration(
+                          color: kAccent.withValues(alpha: 0.15),
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(
+                            color: kAccent.withValues(alpha: 0.4),
+                          ),
+                        ),
+                        child: const Row(
+                          children: [
+                            Text('👑', style: TextStyle(fontSize: 16)),
+                            SizedBox(width: 10),
+                            Expanded(
+                              child: Text(
+                                'You\'re the leader! Rate your own skills here — you already rated task difficulties.',
+                                style: TextStyle(
+                                  color: Color(0xFFB5750A),
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                    const SizedBox(height: 16),
                     _buildRatingCard(member),
                     const SizedBox(height: 14),
                     _buildProgressCard(),
@@ -105,7 +200,15 @@ class _RatingPageState extends State<RatingPage> {
       padding: EdgeInsets.fromLTRB(20, 16, 20, 0),
       child: Row(
         children: [
-          Text('TaskFair', style: TextStyle(color: kPrimary, fontSize: 22, fontWeight: FontWeight.w900, letterSpacing: -0.5)),
+          Text(
+            'TaskFair',
+            style: TextStyle(
+              color: kPrimary,
+              fontSize: 22,
+              fontWeight: FontWeight.w900,
+              letterSpacing: -0.5,
+            ),
+          ),
         ],
       ),
     );
@@ -117,6 +220,7 @@ class _RatingPageState extends State<RatingPage> {
       child: Row(
         children: widget.members.asMap().entries.map((e) {
           final isSelected = e.key == _currentMemberIndex;
+          final isLeader = e.key == 0;
           final color = getAvatarColor(e.key);
           return GestureDetector(
             onTap: () => setState(() => _currentMemberIndex = e.key),
@@ -126,18 +230,43 @@ class _RatingPageState extends State<RatingPage> {
               decoration: BoxDecoration(
                 color: isSelected ? color : kCard,
                 borderRadius: BorderRadius.circular(24),
-                border: Border.all(color: isSelected ? color : kBorder, width: isSelected ? 2 : 1),
+                border: Border.all(
+                  color: isSelected ? color : kBorder,
+                  width: isSelected ? 2 : 1,
+                ),
               ),
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   Container(
-                    width: 24, height: 24,
-                    decoration: BoxDecoration(color: isSelected ? Colors.white.withValues(alpha: 0.25) : color.withValues(alpha: 0.2), shape: BoxShape.circle),
-                    child: Center(child: Text(e.value[0].toUpperCase(), style: TextStyle(color: isSelected ? Colors.white : color, fontSize: 11, fontWeight: FontWeight.w800))),
+                    width: 24,
+                    height: 24,
+                    decoration: BoxDecoration(
+                      color: isSelected
+                          ? Colors.white.withValues(alpha: 0.25)
+                          : color.withValues(alpha: 0.2),
+                      shape: BoxShape.circle,
+                    ),
+                    child: Center(
+                      child: Text(
+                        e.value[0].toUpperCase(),
+                        style: TextStyle(
+                          color: isSelected ? Colors.white : color,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ),
                   ),
                   const SizedBox(width: 8),
-                  Text(e.value, style: TextStyle(color: isSelected ? Colors.white : kTextDark, fontWeight: FontWeight.w600, fontSize: 14)),
+                  Text(
+                    isLeader ? '${e.value} 👑' : e.value,
+                    style: TextStyle(
+                      color: isSelected ? Colors.white : kTextDark,
+                      fontWeight: FontWeight.w600,
+                      fontSize: 14,
+                    ),
+                  ),
                 ],
               ),
             ),
@@ -151,19 +280,67 @@ class _RatingPageState extends State<RatingPage> {
     final memberColor = getAvatarColor(_currentMemberIndex);
     return Container(
       padding: const EdgeInsets.all(18),
-      decoration: BoxDecoration(color: kCard, borderRadius: BorderRadius.circular(18), border: Border.all(color: kBorder), boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.02), blurRadius: 8, offset: const Offset(0, 2))]),
+      decoration: BoxDecoration(
+        color: kCard,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: kBorder),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.02),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             children: [
-              Container(width: 32, height: 32, decoration: BoxDecoration(color: memberColor, shape: BoxShape.circle), child: Center(child: Text(member[0].toUpperCase(), style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w800)))),
+              Container(
+                width: 32,
+                height: 32,
+                decoration: BoxDecoration(
+                  color: memberColor,
+                  shape: BoxShape.circle,
+                ),
+                child: Center(
+                  child: Text(
+                    member[0].toUpperCase(),
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ),
+              ),
               const SizedBox(width: 10),
               Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  RichText(text: TextSpan(style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700), children: [const TextSpan(text: 'Rating as ', style: TextStyle(color: kTextMid)), TextSpan(text: member, style: TextStyle(color: memberColor))])),
-                  Text('$_ratedCount of ${widget.tasks.length} tasks rated', style: const TextStyle(color: kTextLight, fontSize: 11)),
+                  RichText(
+                    text: TextSpan(
+                      style: const TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w700,
+                      ),
+                      children: [
+                        const TextSpan(
+                          text: 'Rating as ',
+                          style: TextStyle(color: kTextMid),
+                        ),
+                        TextSpan(
+                          text: member,
+                          style: TextStyle(color: memberColor),
+                        ),
+                      ],
+                    ),
+                  ),
+                  Text(
+                    '$_ratedCount of ${widget.tasks.length} tasks rated',
+                    style: const TextStyle(color: kTextLight, fontSize: 11),
+                  ),
                 ],
               ),
             ],
@@ -175,22 +352,79 @@ class _RatingPageState extends State<RatingPage> {
             final taskIndex = e.key;
             final taskName = e.value;
             final selected = _ratings[_currentMemberIndex][taskIndex];
+            final difficulty = widget.taskDifficulties[taskIndex];
+
             return Container(
               margin: const EdgeInsets.only(bottom: 12),
               padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-              decoration: BoxDecoration(color: kBg, borderRadius: BorderRadius.circular(12), border: Border.all(color: selected > 0 ? kPrimary.withValues(alpha: 0.4) : kBorder)),
-              child: Row(
+              decoration: BoxDecoration(
+                color: kBg,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(
+                  color: selected > 0
+                      ? kPrimary.withValues(alpha: 0.4)
+                      : kBorder,
+                ),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(taskName, style: const TextStyle(color: kTextDark, fontSize: 14, fontWeight: FontWeight.w600)),
-                        Text(selected > 0 ? _ratingLabel(selected) : 'Not rated', style: TextStyle(color: selected > 0 ? kPrimary : kTextLight, fontSize: 11)),
-                      ],
-                    ),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              taskName,
+                              style: const TextStyle(
+                                color: kTextDark,
+                                fontSize: 14,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            // Difficulty badge from leader
+                            Row(
+                              children: [
+                                Container(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 8,
+                                    vertical: 2,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: _difficultyColor(
+                                      difficulty,
+                                    ).withValues(alpha: 0.15),
+                                    borderRadius: BorderRadius.circular(8),
+                                  ),
+                                  child: Text(
+                                    'Difficulty: ${_difficultyLabel(difficulty)}',
+                                    style: TextStyle(
+                                      color: _difficultyColor(difficulty),
+                                      fontSize: 10,
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(width: 6),
+                                if (selected > 0)
+                                  Text(
+                                    _ratingLabel(selected),
+                                    style: TextStyle(
+                                      color: kPrimary,
+                                      fontSize: 11,
+                                    ),
+                                  ),
+                              ],
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
                   ),
-                  const SizedBox(width: 10),
+                  const SizedBox(height: 10),
+                  // Rating stars row
                   Row(
                     children: List.generate(5, (i) {
                       final val = i + 1;
@@ -198,10 +432,27 @@ class _RatingPageState extends State<RatingPage> {
                       return GestureDetector(
                         onTap: () => _setRating(taskIndex, val),
                         child: Container(
-                          margin: const EdgeInsets.only(left: 6),
-                          width: 32, height: 32,
-                          decoration: BoxDecoration(color: isChosen ? kPrimary : kCard, shape: BoxShape.circle, border: Border.all(color: isChosen ? kPrimary : kBorder, width: 1.5)),
-                          child: Center(child: Text('$val', style: TextStyle(color: isChosen ? Colors.white : kTextMid, fontSize: 12, fontWeight: FontWeight.w700))),
+                          margin: const EdgeInsets.only(right: 8),
+                          width: 40,
+                          height: 40,
+                          decoration: BoxDecoration(
+                            color: isChosen ? kPrimary : kCard,
+                            shape: BoxShape.circle,
+                            border: Border.all(
+                              color: isChosen ? kPrimary : kBorder,
+                              width: 1.5,
+                            ),
+                          ),
+                          child: Center(
+                            child: Text(
+                              '$val',
+                              style: TextStyle(
+                                color: isChosen ? Colors.white : kTextMid,
+                                fontSize: 13,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ),
                         ),
                       );
                     }),
@@ -218,11 +469,23 @@ class _RatingPageState extends State<RatingPage> {
   Widget _buildProgressCard() {
     return Container(
       padding: const EdgeInsets.all(18),
-      decoration: BoxDecoration(color: kCard, borderRadius: BorderRadius.circular(18), border: Border.all(color: kBorder)),
+      decoration: BoxDecoration(
+        color: kCard,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: kBorder),
+      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text('SUBMISSION PROGRESS', style: TextStyle(color: kTextLight, fontSize: 10, fontWeight: FontWeight.w800, letterSpacing: 1.2)),
+          const Text(
+            'SUBMISSION PROGRESS',
+            style: TextStyle(
+              color: kTextLight,
+              fontSize: 10,
+              fontWeight: FontWeight.w800,
+              letterSpacing: 1.2,
+            ),
+          ),
           const SizedBox(height: 14),
           ...widget.members.asMap().entries.map((e) {
             final memberIndex = e.key;
@@ -231,18 +494,77 @@ class _RatingPageState extends State<RatingPage> {
             final total = widget.tasks.length;
             final isDone = rated == total;
             final isActive = memberIndex == _currentMemberIndex;
+            final isLeader = memberIndex == 0;
             final color = getAvatarColor(memberIndex);
 
             return Container(
               margin: const EdgeInsets.only(bottom: 10),
               child: Row(
                 children: [
-                  Container(width: 28, height: 28, decoration: BoxDecoration(color: color.withValues(alpha: 0.2), shape: BoxShape.circle, border: Border.all(color: color)), child: Center(child: Text(memberName[0].toUpperCase(), style: TextStyle(color: color, fontSize: 11, fontWeight: FontWeight.w800)))),
+                  Container(
+                    width: 28,
+                    height: 28,
+                    decoration: BoxDecoration(
+                      color: color.withValues(alpha: 0.2),
+                      shape: BoxShape.circle,
+                      border: Border.all(color: color),
+                    ),
+                    child: Center(
+                      child: Text(
+                        memberName[0].toUpperCase(),
+                        style: TextStyle(
+                          color: color,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ),
+                  ),
                   const SizedBox(width: 10),
-                  Expanded(child: Text(memberName, style: const TextStyle(color: kTextDark, fontSize: 13, fontWeight: FontWeight.w600))),
-                  if (isActive) Container(padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3), decoration: BoxDecoration(color: kPrimary.withValues(alpha: 0.15), borderRadius: BorderRadius.circular(8)), child: const Text('Active', style: TextStyle(color: kPrimary, fontSize: 10, fontWeight: FontWeight.w700))) else if (isDone) const Icon(Icons.check_circle_rounded, color: Color(0xFF2D9E7E), size: 18),
+                  Expanded(
+                    child: Text(
+                      isLeader ? '$memberName 👑' : memberName,
+                      style: const TextStyle(
+                        color: kTextDark,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                  if (isActive)
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 3,
+                      ),
+                      decoration: BoxDecoration(
+                        color: kPrimary.withValues(alpha: 0.15),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: const Text(
+                        'Active',
+                        style: TextStyle(
+                          color: kPrimary,
+                          fontSize: 10,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    )
+                  else if (isDone)
+                    const Icon(
+                      Icons.check_circle_rounded,
+                      color: Color(0xFF2D9E7E),
+                      size: 18,
+                    ),
                   const SizedBox(width: 8),
-                  Text('$rated/$total', style: const TextStyle(color: kTextMid, fontSize: 12, fontWeight: FontWeight.w700)),
+                  Text(
+                    '$rated/$total',
+                    style: const TextStyle(
+                      color: kTextMid,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
                 ],
               ),
             );
@@ -262,32 +584,76 @@ class _RatingPageState extends State<RatingPage> {
     ];
     return Container(
       padding: const EdgeInsets.all(18),
-      decoration: BoxDecoration(color: kCard, borderRadius: BorderRadius.circular(18), border: Border.all(color: kBorder)),
+      decoration: BoxDecoration(
+        color: kCard,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: kBorder),
+      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text('RATING GUIDE', style: TextStyle(color: kTextLight, fontSize: 10, fontWeight: FontWeight.w800, letterSpacing: 1.2)),
-          const SizedBox(height: 14),
-          ...guide.map((g) => Padding(
-            padding: const EdgeInsets.only(bottom: 10),
-            child: Row(
-              children: [
-                Container(width: 24, height: 24, decoration: BoxDecoration(color: g.$2.withValues(alpha: 0.15), shape: BoxShape.circle, border: Border.all(color: g.$2.withValues(alpha: 0.3))), child: Center(child: Text('${g.$1}', style: TextStyle(color: g.$2, fontSize: 11, fontWeight: FontWeight.w800)))),
-                const SizedBox(width: 10),
-                Text(g.$3, style: TextStyle(color: g.$2, fontSize: 13, fontWeight: FontWeight.w700)),
-              ],
+          const Text(
+            'SKILL RATING GUIDE',
+            style: TextStyle(
+              color: kTextLight,
+              fontSize: 10,
+              fontWeight: FontWeight.w800,
+              letterSpacing: 1.2,
             ),
-          )),
+          ),
+          const SizedBox(height: 14),
+          ...guide.map(
+            (g) => Padding(
+              padding: const EdgeInsets.only(bottom: 10),
+              child: Row(
+                children: [
+                  Container(
+                    width: 24,
+                    height: 24,
+                    decoration: BoxDecoration(
+                      color: g.$2.withValues(alpha: 0.15),
+                      shape: BoxShape.circle,
+                      border: Border.all(color: g.$2.withValues(alpha: 0.3)),
+                    ),
+                    child: Center(
+                      child: Text(
+                        '${g.$1}',
+                        style: TextStyle(
+                          color: g.$2,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Text(
+                    g.$3,
+                    style: TextStyle(
+                      color: g.$2,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
         ],
       ),
     );
   }
 
   Widget _buildBottomBar(bool isLast) {
-    final nextLabel = isLast ? 'Submit & Compute' : 'Next → ${widget.members[_currentMemberIndex + 1]}';
+    final nextLabel = isLast
+        ? 'Submit & Compute'
+        : 'Next → ${widget.members[_currentMemberIndex + 1]}';
     return Container(
       padding: const EdgeInsets.fromLTRB(24, 16, 24, 32),
-      decoration: const BoxDecoration(color: kBg, border: Border(top: BorderSide(color: kBorder))),
+      decoration: const BoxDecoration(
+        color: kBg,
+        border: Border(top: BorderSide(color: kBorder)),
+      ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
@@ -299,14 +665,33 @@ class _RatingPageState extends State<RatingPage> {
               decoration: BoxDecoration(
                 color: _allRated ? kPrimary : kPrimary.withValues(alpha: 0.4),
                 borderRadius: BorderRadius.circular(16),
-                boxShadow: _allRated ? [BoxShadow(color: kPrimary.withValues(alpha: 0.35), blurRadius: 16, offset: const Offset(0, 4))] : [],
+                boxShadow: _allRated
+                    ? [
+                        BoxShadow(
+                          color: kPrimary.withValues(alpha: 0.35),
+                          blurRadius: 16,
+                          offset: const Offset(0, 4),
+                        ),
+                      ]
+                    : [],
               ),
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  Text(nextLabel, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 16)),
+                  Text(
+                    nextLabel,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w800,
+                      fontSize: 16,
+                    ),
+                  ),
                   const SizedBox(width: 8),
-                  const Icon(Icons.arrow_forward_rounded, color: Colors.white, size: 20),
+                  const Icon(
+                    Icons.arrow_forward_rounded,
+                    color: Colors.white,
+                    size: 20,
+                  ),
                 ],
               ),
             ),
@@ -314,15 +699,17 @@ class _RatingPageState extends State<RatingPage> {
           const SizedBox(height: 16),
           GestureDetector(
             onTap: () => Navigator.pop(context),
-            child: const Text('Go Back', style: TextStyle(color: kTextMid, fontWeight: FontWeight.w700, fontSize: 14)),
+            child: const Text(
+              'Go Back',
+              style: TextStyle(
+                color: kTextMid,
+                fontWeight: FontWeight.w700,
+                fontSize: 14,
+              ),
+            ),
           ),
         ],
       ),
     );
-  }
-
-  String _ratingLabel(int rating) {
-    const labels = ['', 'Beginner', 'Elementary', 'Intermediate', 'Advanced', 'Expert'];
-    return labels[rating.clamp(0, 5)];
   }
 }
