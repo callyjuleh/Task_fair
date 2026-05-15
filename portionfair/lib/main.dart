@@ -11,9 +11,11 @@ class TaskFairApp extends StatelessWidget {
     return MaterialApp(
       title: 'TaskFair',
       debugShowCheckedModeBanner: false,
-      theme: ThemeData.dark().copyWith(
-        scaffoldBackgroundColor: const Color(0xFF0A0F0A),
-        colorScheme: const ColorScheme.dark(primary: Color(0xFF22C55E)),
+      theme: ThemeData(
+        fontFamily: 'Nunito',
+        scaffoldBackgroundColor: const Color(0xFFFFF8F0),
+        colorScheme: const ColorScheme.light(primary: Color(0xFFFF8C69)),
+        useMaterial3: true,
       ),
       home: const LoginPage(),
     );
