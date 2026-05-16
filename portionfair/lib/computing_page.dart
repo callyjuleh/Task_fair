@@ -1,6 +1,9 @@
+import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
 import 'results_page.dart';
 import 'task.dart';
+import 'login_page.dart'; // for kBaseUrl
 
 class ComputingPage extends StatefulWidget {
   final String groupName;
@@ -9,6 +12,11 @@ class ComputingPage extends StatefulWidget {
   final List<List<int>> ratings;
   final DateTime? deadline;
   final List<int> taskDifficulties;
+  // ─── NEW: DB identifiers ─────────────────────────────────────────────────────
+  final String projectId;
+  final List<String> memberIds;
+  final List<String> taskIds;
+  final bool leaderAlreadySaved; // leader ratings saved in LeaderRatingPage
 
   const ComputingPage({
     super.key,
@@ -18,6 +26,10 @@ class ComputingPage extends StatefulWidget {
     required this.ratings,
     required this.deadline,
     required this.taskDifficulties,
+    required this.projectId,
+    required this.memberIds,
+    required this.taskIds,
+    this.leaderAlreadySaved = false,
   });
 
   @override
@@ -31,16 +43,17 @@ class _ComputingPageState extends State<ComputingPage>
 
   final List<bool> _stepsDone = List.filled(7, false);
   bool _computationDone = false;
+  bool _dbSaveFailed = false;
   late List<List<double>> _shapleyScores;
 
   static const _stepTitles = [
-    'Load skill ratings',
+    'Save ratings to database',
     'Enumerate coalitions',
     'Compute marginal contributions',
     'Apply Shapley formula',
     'Build score matrix',
     'Determine optimal loads',
-    'Finalize results',
+    'Finalize & save results',
   ];
 
   @override
@@ -54,21 +67,71 @@ class _ComputingPageState extends State<ComputingPage>
     _circleAnim = Tween<double>(begin: 0, end: 1).animate(
       CurvedAnimation(parent: _circleController, curve: Curves.easeOut),
     );
-    _runSteps();
+    _saveAndRun();
   }
 
-  Future<void> _runSteps() async {
+  // ─── Save all ratings to DB then run step animation ───────────────────────
+  Future<void> _saveAndRun() async {
     _circleController.forward();
-    await Future.delayed(const Duration(milliseconds: 500));
-    for (int i = 0; i < _stepTitles.length; i++) {
-      await Future.delayed(Duration(milliseconds: 300 + i * 120));
-      if (mounted) setState(() => _stepsDone[i] = true);
+    await Future.delayed(const Duration(milliseconds: 300));
+
+    // Step 1: save each member's ratings via POST /ratings
+    // (skip leader index 0 if their ratings were already saved in LeaderRatingPage)
+    try {
+      for (int mi = 0; mi < widget.members.length; mi++) {
+        if (mi == 0 && widget.leaderAlreadySaved) continue;
+
+        // Build ratings map: { taskId: skillRating }
+        final Map<String, int> ratingsMap = {};
+        for (int ti = 0; ti < widget.tasks.length; ti++) {
+          ratingsMap[widget.taskIds[ti]] = widget.ratings[mi][ti];
+        }
+
+        final res = await http.post(
+          Uri.parse('$kBaseUrl/ratings'),
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode({
+            'member_id': widget.memberIds[mi],
+            'ratings': ratingsMap,
+          }),
+        );
+
+        if (res.statusCode != 200) {
+          setState(() => _dbSaveFailed = true);
+        }
+      }
+
+      if (mounted) setState(() => _stepsDone[0] = true);
+      await Future.delayed(const Duration(milliseconds: 350));
+
+      // Steps 2–6: animate local computation steps
+      for (int i = 1; i <= 5; i++) {
+        await Future.delayed(Duration(milliseconds: 300 + i * 120));
+        if (mounted) setState(() => _stepsDone[i] = true);
+      }
+
+      // Step 7: call /compute-shapley on server to persist results table
+      await http.post(
+        Uri.parse('$kBaseUrl/compute-shapley'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({'project_id': widget.projectId}),
+      );
+
+      await Future.delayed(const Duration(milliseconds: 400));
+      if (mounted) setState(() => _stepsDone[6] = true);
+    } catch (_) {
+      // Network error — still mark steps done so user can see results locally
+      for (int i = 0; i < 7; i++) {
+        if (mounted) setState(() => _stepsDone[i] = true);
+      }
+      if (mounted) setState(() => _dbSaveFailed = true);
     }
+
     await Future.delayed(const Duration(milliseconds: 400));
     if (mounted) setState(() => _computationDone = true);
   }
 
-  // ─── Shapley value computation ─────────────────────────────────────────────
+  // ─── Local Shapley computation (for instant UI display) ───────────────────
   List<List<double>> _computeShapley() {
     final n = widget.members.length;
     final t = widget.tasks.length;
@@ -108,111 +171,86 @@ class _ComputingPageState extends State<ComputingPage>
 
   int _factorial(int n) => n <= 1 ? 1 : n * _factorial(n - 1);
 
-  // ─── Fair multi-assignee assignment ───────────────────────────────────────
-  //
-  // Problem: if tasks < members, some members get no task.
-  // Solution (2-step):
-  //
-  // Step 1 — Primary assignment:
-  //   Sort tasks by score spread desc (most contested first).
-  //   For each task, pick the highest-scoring member not yet assigned.
-  //   If all members already assigned (tasks > members), pick least-loaded.
-  //
-  // Step 2 — Co-assign leftover members:
-  //   Find members with no task yet (leftover).
-  //   Sort leftover by overall score desc (best helpers first).
-  //   For each leftover member, find the task with the lowest average
-  //   Shapley score among current assignees (needs the most help),
-  //   weighted by this member's fit: composite = avg - (member_fit × 0.3).
-  //   Co-assign the leftover member to that task.
-  //
-  // Result: every member gets at least one task; hard/low-score tasks
-  // get collaborative support.
-  //
+  // ─── Fair assignments using Shapley scores ────────────────────────────────
+  // Rules:
+  //  1. Every task gets exactly one primary assignee (highest Shapley score).
+  //  2. If tasks > members, members can receive multiple tasks — assigned to
+  //     whoever has the highest score for that task (load-balanced as tiebreak).
+  //  3. Every member receives at least one task when tasks >= members.
   List<List<int>> get _fairAssignments {
     final int numTasks = widget.tasks.length;
     final int numMembers = widget.members.length;
 
-    // ── Step 1: greedy primary assignment ────────────────────────────────────
+    // Each task gets one assignee list (primary + any co-assignees)
+    final List<List<int>> assignments = List.generate(numTasks, (_) => <int>[]);
+
+    // Track load (number of tasks assigned per member)
+    final List<int> load = List.filled(numMembers, 0);
+
+    // Sort tasks by "contention" — highest spread between best and second-best
+    // means that task has a clear best candidate; assign it first.
     final List<int> taskOrder = List.generate(numTasks, (i) => i);
     taskOrder.sort((a, b) {
-      final sa = _shapleyScores.map((m) => m[a]).toList()
+      final scoresA = List.generate(numMembers, (m) => _shapleyScores[m][a])
         ..sort((x, y) => y.compareTo(x));
-      final sb = _shapleyScores.map((m) => m[b]).toList()
+      final scoresB = List.generate(numMembers, (m) => _shapleyScores[m][b])
         ..sort((x, y) => y.compareTo(x));
-      final spreadA = sa.length > 1 ? sa[0] - sa[1] : sa[0];
-      final spreadB = sb.length > 1 ? sb[0] - sb[1] : sb[0];
+      final spreadA = scoresA.length > 1 ? scoresA[0] - scoresA[1] : scoresA[0];
+      final spreadB = scoresB.length > 1 ? scoresB[0] - scoresB[1] : scoresB[0];
       return spreadB.compareTo(spreadA);
     });
 
-    final List<List<int>> assignments = List.generate(numTasks, (_) => <int>[]);
-    final Set<int> assignedMembers = {};
-
+    // First pass: assign each task to the best available member (prefer least loaded)
+    final Set<int> assignedOnce = {};
     for (final t in taskOrder) {
+      // Rank members by Shapley score for this task, break ties by load (prefer lighter)
       final candidates = List.generate(numMembers, (m) => m)
-        ..sort((a, b) => _shapleyScores[b][t].compareTo(_shapleyScores[a][t]));
+        ..sort((a, b) {
+          final scoreDiff = _shapleyScores[b][t].compareTo(
+            _shapleyScores[a][t],
+          );
+          if (scoreDiff != 0) return scoreDiff;
+          return load[a].compareTo(load[b]); // lighter load wins tie
+        });
 
-      int chosen = -1;
-      for (final m in candidates) {
-        if (!assignedMembers.contains(m)) {
-          chosen = m;
-          break;
-        }
-      }
-
-      // Fallback: all members assigned (tasks > members) → pick least-loaded
-      if (chosen == -1) {
-        final loads = <int, int>{};
-        for (final list in assignments) {
-          for (final m in list) loads[m] = (loads[m] ?? 0) + 1;
-        }
-        chosen = candidates.reduce(
-          (a, b) => (loads[a] ?? 0) <= (loads[b] ?? 0) ? a : b,
-        );
-      }
+      // Prefer members not yet assigned any task to ensure everyone gets at least one
+      int chosen = candidates.firstWhere(
+        (m) => !assignedOnce.contains(m),
+        orElse: () => candidates.first, // all assigned: pick highest scorer
+      );
 
       assignments[t].add(chosen);
-      assignedMembers.add(chosen);
+      assignedOnce.add(chosen);
+      load[chosen]++;
     }
 
-    // ── Step 2: co-assign leftover members to weakest tasks ──────────────────
+    // Second pass: if any member was never assigned (tasks < members scenario),
+    // assign them to the task where they add the most value relative to current assignee
     final List<int> unassigned = List.generate(
       numMembers,
       (m) => m,
-    ).where((m) => !assignedMembers.contains(m)).toList();
-
-    // Sort unassigned by overall average score desc (best helpers first)
-    unassigned.sort((a, b) {
-      final scoreA = _shapleyScores[a].reduce((x, y) => x + y) / numTasks;
-      final scoreB = _shapleyScores[b].reduce((x, y) => x + y) / numTasks;
-      return scoreB.compareTo(scoreA);
-    });
+    ).where((m) => !assignedOnce.contains(m)).toList();
 
     for (final m in unassigned) {
-      // Find the task that needs the most help:
-      // lowest avg assignee score + high fit for this member
-      int weakestTask = 0;
-      double lowestComposite = double.infinity;
+      // Find the task where this member's score is closest to (or exceeds) the
+      // current assignee's score — best collaborative fit
+      int bestTask = 0;
+      double bestFit = double.negativeInfinity;
 
       for (int t = 0; t < numTasks; t++) {
-        final assignees = assignments[t];
-        final avg = assignees.isEmpty
-            ? 0.0
-            : assignees
-                      .map((a) => _shapleyScores[a][t])
-                      .reduce((x, y) => x + y) /
-                  assignees.length;
-
-        final fit = _shapleyScores[m][t];
-        final composite = avg - fit * 0.3;
-
-        if (composite < lowestComposite) {
-          lowestComposite = composite;
-          weakestTask = t;
+        final currentAssigneeScore = assignments[t].isNotEmpty
+            ? _shapleyScores[assignments[t].first][t]
+            : 0.0;
+        // Prefer tasks where the member is strong AND the current assignee is weak
+        final fit = _shapleyScores[m][t] - currentAssigneeScore * 0.5;
+        if (fit > bestFit) {
+          bestFit = fit;
+          bestTask = t;
         }
       }
 
-      assignments[weakestTask].add(m);
+      assignments[bestTask].add(m);
+      load[m]++;
     }
 
     return assignments;
@@ -235,35 +273,14 @@ class _ComputingPageState extends State<ComputingPage>
             buildStepper(activeStep: 2),
             Expanded(
               child: SingleChildScrollView(
-                padding: const EdgeInsets.fromLTRB(20, 28, 20, 40),
+                padding: const EdgeInsets.fromLTRB(20, 24, 20, 40),
                 child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Text(
-                      'Computing Assignments ⚡',
-                      style: TextStyle(
-                        color: kTextDark,
-                        fontSize: 24,
-                        fontWeight: FontWeight.w900,
-                        letterSpacing: -0.6,
-                      ),
-                    ),
-                    const SizedBox(height: 6),
-                    const Text(
-                      'Running the Shapley value algorithm across all member-task combinations.',
-                      style: TextStyle(
-                        color: kTextMid,
-                        fontSize: 13,
-                        height: 1.5,
-                      ),
-                    ),
-                    const SizedBox(height: 28),
                     Container(
-                      width: double.infinity,
-                      padding: const EdgeInsets.all(32),
+                      padding: const EdgeInsets.all(24),
                       decoration: BoxDecoration(
                         color: kCard,
-                        borderRadius: BorderRadius.circular(20),
+                        borderRadius: BorderRadius.circular(24),
                         border: Border.all(color: kBorder),
                       ),
                       child: Column(
@@ -271,8 +288,8 @@ class _ComputingPageState extends State<ComputingPage>
                           AnimatedBuilder(
                             animation: _circleAnim,
                             builder: (_, __) => SizedBox(
-                              width: 90,
-                              height: 90,
+                              width: 100,
+                              height: 100,
                               child: Stack(
                                 alignment: Alignment.center,
                                 children: [
@@ -315,6 +332,31 @@ class _ComputingPageState extends State<ComputingPage>
                               fontWeight: FontWeight.w800,
                             ),
                           ),
+                          if (_dbSaveFailed) ...[
+                            const SizedBox(height: 8),
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 14,
+                                vertical: 8,
+                              ),
+                              decoration: BoxDecoration(
+                                color: Colors.red.withValues(alpha: 0.08),
+                                borderRadius: BorderRadius.circular(10),
+                                border: Border.all(
+                                  color: Colors.red.withValues(alpha: 0.3),
+                                ),
+                              ),
+                              child: const Text(
+                                '⚠️ Could not reach server — results shown locally but not saved to database.',
+                                textAlign: TextAlign.center,
+                                style: TextStyle(
+                                  color: Colors.redAccent,
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ),
+                          ],
                         ],
                       ),
                     ),
@@ -443,6 +485,7 @@ class _ComputingPageState extends State<ComputingPage>
                           deadline: widget.deadline,
                           taskDifficulties: widget.taskDifficulties,
                           assignments: _fairAssignments,
+                          projectId: '',
                         ),
                       ),
                     );

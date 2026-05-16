@@ -1,13 +1,20 @@
+import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
 import 'rating_page.dart';
 import 'task.dart';
+import 'login_page.dart'; // for kBaseUrl
 
 class LeaderRatingPage extends StatefulWidget {
   final String groupName;
-  final String leaderName; // first member = leader
+  final String leaderName;
   final List<String> members;
   final List<String> tasks;
   final DateTime? deadline;
+  // ─── NEW: DB identifiers passed from TaskSetupPage ───────────────
+  final String projectId;
+  final List<String> memberIds;
+  final List<String> taskIds;
 
   const LeaderRatingPage({
     super.key,
@@ -16,6 +23,9 @@ class LeaderRatingPage extends StatefulWidget {
     required this.members,
     required this.tasks,
     required this.deadline,
+    required this.projectId,
+    required this.memberIds,
+    required this.taskIds,
   });
 
   @override
@@ -23,29 +33,38 @@ class LeaderRatingPage extends StatefulWidget {
 }
 
 class _LeaderRatingPageState extends State<LeaderRatingPage> {
-  // difficulty ratings per task (1–5, 0 = not yet rated)
   late List<int> _difficulties;
+  late List<int> _skillRatings; // leader's own skill per task
+  bool _isSaving = false;
 
   @override
   void initState() {
     super.initState();
     _difficulties = List.filled(widget.tasks.length, 0);
+    _skillRatings = List.filled(widget.tasks.length, 0);
   }
 
   int get _ratedCount => _difficulties.where((d) => d > 0).length;
-  bool get _allRated => _difficulties.every((d) => d > 0);
+  int get _skillRatedCount => _skillRatings.where((r) => r > 0).length;
+  bool get _allRated =>
+      _difficulties.every((d) => d > 0) && _skillRatings.every((r) => r > 0);
 
   void _setDifficulty(int taskIndex, int value) {
     setState(() => _difficulties[taskIndex] = value);
   }
 
-  void _proceed() {
+  void _setSkillRating(int taskIndex, int value) {
+    setState(() => _skillRatings[taskIndex] = value);
+  }
+
+  // ─── UPDATED: saves difficulty + leader skill ratings to DB before proceeding ──
+  Future<void> _proceed() async {
     if (!_allRated) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           backgroundColor: kPrimary,
           content: Text(
-            'Please rate the difficulty of all tasks first! 📋',
+            'Please rate task difficulty AND your skill level for all tasks! 📋',
             style: TextStyle(color: Colors.white),
           ),
         ),
@@ -53,6 +72,49 @@ class _LeaderRatingPageState extends State<LeaderRatingPage> {
       return;
     }
 
+    setState(() => _isSaving = true);
+
+    try {
+      // 1. Save difficulty for each task via PUT /tasks/:id
+      for (int i = 0; i < widget.taskIds.length; i++) {
+        final res = await http.put(
+          Uri.parse('$kBaseUrl/tasks/${widget.taskIds[i]}'),
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode({'difficulty': _difficulties[i]}),
+        );
+        if (res.statusCode != 200) {
+          _showSnack('Failed to save task difficulty. Try again.');
+          return;
+        }
+      }
+
+      // 2. Save leader's skill ratings to DB via POST /ratings
+      final Map<String, int> ratingsMap = {};
+      for (int i = 0; i < widget.taskIds.length; i++) {
+        ratingsMap[widget.taskIds[i]] = _skillRatings[i];
+      }
+      final rRes = await http.post(
+        Uri.parse('$kBaseUrl/ratings'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'member_id': widget.memberIds[0], // leader is always index 0
+          'ratings': ratingsMap,
+        }),
+      );
+      if (rRes.statusCode != 200) {
+        _showSnack('Failed to save your skill ratings. Try again.');
+        return;
+      }
+    } catch (e) {
+      _showSnack('Cannot reach server. Check your connection.');
+      return;
+    } finally {
+      if (mounted) setState(() => _isSaving = false);
+    }
+
+    if (!mounted) return;
+
+    // Pre-fill leader's skill ratings so RatingPage starts from member index 1
     Navigator.push(
       context,
       MaterialPageRoute(
@@ -62,7 +124,21 @@ class _LeaderRatingPageState extends State<LeaderRatingPage> {
           tasks: widget.tasks,
           deadline: widget.deadline,
           taskDifficulties: _difficulties,
+          leaderSkillRatings: List.from(_skillRatings),
+          // ─── Pass IDs through ───────────────────────────────────
+          projectId: widget.projectId,
+          memberIds: widget.memberIds,
+          taskIds: widget.taskIds,
         ),
+      ),
+    );
+  }
+
+  void _showSnack(String msg) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        backgroundColor: kPrimary,
+        content: Text(msg, style: const TextStyle(color: Colors.white)),
       ),
     );
   }
@@ -82,7 +158,6 @@ class _LeaderRatingPageState extends State<LeaderRatingPage> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    // ── Header ──────────────────────────────────────
                     Row(
                       children: [
                         Container(
@@ -134,8 +209,6 @@ class _LeaderRatingPageState extends State<LeaderRatingPage> {
                       ),
                     ),
                     const SizedBox(height: 24),
-
-                    // ── Leader info chip ─────────────────────────────
                     Container(
                       padding: const EdgeInsets.symmetric(
                         horizontal: 14,
@@ -191,23 +264,36 @@ class _LeaderRatingPageState extends State<LeaderRatingPage> {
                             ],
                           ),
                           const Spacer(),
-                          Text(
-                            '$_ratedCount / ${widget.tasks.length} rated',
-                            style: const TextStyle(
-                              color: Color(0xFFB5750A),
-                              fontSize: 12,
-                              fontWeight: FontWeight.w700,
-                            ),
+                          Column(
+                            crossAxisAlignment: CrossAxisAlignment.end,
+                            children: [
+                              Text(
+                                'Difficulty: $_ratedCount/${widget.tasks.length}',
+                                style: const TextStyle(
+                                  color: Color(0xFFB5750A),
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                              Text(
+                                'Skills: $_skillRatedCount/${widget.tasks.length}',
+                                style: const TextStyle(
+                                  color: Color(0xFFB5750A),
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                            ],
                           ),
                         ],
                       ),
                     ),
                     const SizedBox(height: 20),
-
-                    // ── Task difficulty cards ────────────────────────
                     _buildDifficultyCard(),
                     const SizedBox(height: 16),
                     _buildDifficultyGuide(),
+                    const SizedBox(height: 16),
+                    _buildSkillRatingCard(),
                     const SizedBox(height: 16),
                     _buildNextStepInfo(),
                   ],
@@ -245,68 +331,42 @@ class _LeaderRatingPageState extends State<LeaderRatingPage> {
       padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
         color: kCard,
-        borderRadius: BorderRadius.circular(20),
+        borderRadius: BorderRadius.circular(18),
         border: Border.all(color: kBorder),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.03),
-            blurRadius: 10,
-            offset: const Offset(0, 3),
-          ),
-        ],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Row(
-            children: [
-              Text('📋', style: TextStyle(fontSize: 18)),
-              SizedBox(width: 8),
-              Text(
-                'TASK DIFFICULTY',
-                style: TextStyle(
-                  color: kPrimary,
-                  fontSize: 12,
-                  fontWeight: FontWeight.w800,
-                  letterSpacing: 1.2,
-                ),
-              ),
-            ],
+          const Text(
+            'TASKS',
+            style: TextStyle(
+              color: kTextLight,
+              fontSize: 10,
+              fontWeight: FontWeight.w800,
+              letterSpacing: 1.2,
+            ),
           ),
           const SizedBox(height: 16),
-          Container(height: 1, color: kBorder),
-          const SizedBox(height: 16),
           ...widget.tasks.asMap().entries.map((e) {
-            final taskIndex = e.key;
-            final taskName = e.value;
-            final selected = _difficulties[taskIndex];
-
-            return Container(
-              margin: const EdgeInsets.only(bottom: 12),
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-              decoration: BoxDecoration(
-                color: kBg,
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(
-                  color: selected > 0
-                      ? kPrimary.withValues(alpha: 0.4)
-                      : kBorder,
-                ),
-              ),
+            final i = e.key;
+            final task = e.value;
+            final selected = _difficulties[i];
+            return Padding(
+              padding: const EdgeInsets.only(bottom: 20),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Row(
                     children: [
-                      _numBadge(taskIndex + 1),
+                      _numBadge(i + 1),
                       const SizedBox(width: 10),
                       Expanded(
                         child: Text(
-                          taskName,
+                          task,
                           style: const TextStyle(
                             color: kTextDark,
-                            fontSize: 14,
-                            fontWeight: FontWeight.w600,
+                            fontSize: 13,
+                            fontWeight: FontWeight.w700,
                           ),
                         ),
                       ),
@@ -323,72 +383,64 @@ class _LeaderRatingPageState extends State<LeaderRatingPage> {
                             borderRadius: BorderRadius.circular(8),
                           ),
                           child: Text(
-                            _difficultyLabel(selected),
+                            _difficultyShort(selected),
                             style: TextStyle(
                               color: _difficultyColor(selected),
-                              fontSize: 10,
+                              fontSize: 11,
                               fontWeight: FontWeight.w700,
                             ),
                           ),
                         ),
                     ],
                   ),
-                  const SizedBox(height: 12),
+                  const SizedBox(height: 10),
                   Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: List.generate(5, (i) {
-                      final val = i + 1;
-                      final isChosen = selected == val;
+                    children: List.generate(5, (star) {
+                      final val = star + 1;
+                      final isSelected = selected == val;
                       final color = _difficultyColor(val);
-                      return GestureDetector(
-                        onTap: () => _setDifficulty(taskIndex, val),
-                        child: Column(
-                          children: [
-                            Container(
-                              width: 44,
-                              height: 44,
-                              decoration: BoxDecoration(
-                                color: isChosen ? color : kCard,
-                                shape: BoxShape.circle,
-                                border: Border.all(
-                                  color: isChosen ? color : kBorder,
-                                  width: 1.5,
-                                ),
-                                boxShadow: isChosen
-                                    ? [
-                                        BoxShadow(
-                                          color: color.withValues(alpha: 0.3),
-                                          blurRadius: 8,
-                                          offset: const Offset(0, 2),
-                                        ),
-                                      ]
-                                    : [],
+                      return Expanded(
+                        child: GestureDetector(
+                          onTap: () => _setDifficulty(i, val),
+                          child: Container(
+                            margin: EdgeInsets.only(right: star < 4 ? 6 : 0),
+                            padding: const EdgeInsets.symmetric(vertical: 10),
+                            decoration: BoxDecoration(
+                              color: isSelected
+                                  ? color.withValues(alpha: 0.2)
+                                  : kBg,
+                              borderRadius: BorderRadius.circular(10),
+                              border: Border.all(
+                                color: isSelected ? color : kBorder,
+                                width: isSelected ? 1.8 : 1,
                               ),
-                              child: Center(
-                                child: Text(
-                                  '$val',
-                                  style: TextStyle(
-                                    color: isChosen ? Colors.white : kTextMid,
-                                    fontSize: 15,
-                                    fontWeight: FontWeight.w800,
-                                  ),
+                            ),
+                            child: Center(
+                              child: Text(
+                                '$val',
+                                style: TextStyle(
+                                  color: isSelected ? color : kTextLight,
+                                  fontSize: 15,
+                                  fontWeight: FontWeight.w800,
                                 ),
                               ),
                             ),
-                            const SizedBox(height: 4),
-                            Text(
-                              _difficultyShort(val),
-                              style: TextStyle(
-                                color: isChosen ? color : kTextLight,
-                                fontSize: 9,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                          ],
+                          ),
                         ),
                       );
                     }),
                   ),
+                  if (selected > 0) ...[
+                    const SizedBox(height: 6),
+                    Text(
+                      _difficultyLabel(selected),
+                      style: TextStyle(
+                        color: _difficultyColor(selected),
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
                 ],
               ),
             );
@@ -488,6 +540,154 @@ class _LeaderRatingPageState extends State<LeaderRatingPage> {
     );
   }
 
+  Widget _buildSkillRatingCard() {
+    const skillColors = [
+      Color(0xFF2D9E7E),
+      Color(0xFF7EC8E3),
+      Color(0xFFFFD166),
+      Color(0xFFFF8C69),
+      Color(0xFFB5A4E8),
+    ];
+    const skillLabels = [
+      'Beginner',
+      'Elementary',
+      'Intermediate',
+      'Advanced',
+      'Expert',
+    ];
+
+    return Container(
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: kCard,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: kAccent.withValues(alpha: 0.5)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Text('👑', style: TextStyle(fontSize: 14)),
+              const SizedBox(width: 6),
+              const Text(
+                'YOUR SKILL SELF-RATING',
+                style: TextStyle(
+                  color: Color(0xFFB5750A),
+                  fontSize: 10,
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: 1.2,
+                ),
+              ),
+              const Spacer(),
+              Text(
+                '$_skillRatedCount/${widget.tasks.length} rated',
+                style: const TextStyle(
+                  color: Color(0xFFB5750A),
+                  fontSize: 11,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          const Text(
+            'Rate your own skill level (1–5) for each task.',
+            style: TextStyle(color: kTextMid, fontSize: 12, height: 1.4),
+          ),
+          const SizedBox(height: 16),
+          ...widget.tasks.asMap().entries.map((e) {
+            final i = e.key;
+            final task = e.value;
+            final selected = _skillRatings[i];
+            return Padding(
+              padding: const EdgeInsets.only(bottom: 20),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      _numBadge(i + 1),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Text(
+                          task,
+                          style: const TextStyle(
+                            color: kTextDark,
+                            fontSize: 13,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ),
+                      if (selected > 0)
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 3,
+                          ),
+                          decoration: BoxDecoration(
+                            color: skillColors[selected - 1].withValues(
+                              alpha: 0.15,
+                            ),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Text(
+                            skillLabels[selected - 1],
+                            style: TextStyle(
+                              color: skillColors[selected - 1],
+                              fontSize: 11,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+                  Row(
+                    children: List.generate(5, (star) {
+                      final val = star + 1;
+                      final isSelected = selected == val;
+                      final color = skillColors[star];
+                      return Expanded(
+                        child: GestureDetector(
+                          onTap: () => _setSkillRating(i, val),
+                          child: Container(
+                            margin: EdgeInsets.only(right: star < 4 ? 6 : 0),
+                            padding: const EdgeInsets.symmetric(vertical: 10),
+                            decoration: BoxDecoration(
+                              color: isSelected
+                                  ? color.withValues(alpha: 0.2)
+                                  : kBg,
+                              borderRadius: BorderRadius.circular(10),
+                              border: Border.all(
+                                color: isSelected ? color : kBorder,
+                                width: isSelected ? 1.8 : 1,
+                              ),
+                            ),
+                            child: Center(
+                              child: Text(
+                                '$val',
+                                style: TextStyle(
+                                  color: isSelected ? color : kTextLight,
+                                  fontSize: 15,
+                                  fontWeight: FontWeight.w800,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      );
+                    }),
+                  ),
+                ],
+              ),
+            );
+          }),
+        ],
+      ),
+    );
+  }
+
   Widget _buildNextStepInfo() {
     return Container(
       padding: const EdgeInsets.all(16),
@@ -514,7 +714,7 @@ class _LeaderRatingPageState extends State<LeaderRatingPage> {
                 ),
                 const SizedBox(height: 3),
                 Text(
-                  'After this, all ${widget.members.length} members (including you) will rate their own skill per task.',
+                  'After this, the remaining ${widget.members.length - 1} member(s) will rate their own skill per task.',
                   style: const TextStyle(
                     color: kTextMid,
                     fontSize: 12,
@@ -540,14 +740,16 @@ class _LeaderRatingPageState extends State<LeaderRatingPage> {
         mainAxisSize: MainAxisSize.min,
         children: [
           GestureDetector(
-            onTap: _proceed,
+            onTap: (_isSaving || !_allRated) ? null : _proceed,
             child: Container(
               width: double.infinity,
               padding: const EdgeInsets.symmetric(vertical: 18),
               decoration: BoxDecoration(
-                color: _allRated ? kPrimary : kPrimary.withValues(alpha: 0.4),
+                color: _allRated && !_isSaving
+                    ? kPrimary
+                    : kPrimary.withValues(alpha: 0.4),
                 borderRadius: BorderRadius.circular(16),
-                boxShadow: _allRated
+                boxShadow: (_allRated && !_isSaving)
                     ? [
                         BoxShadow(
                           color: kPrimary.withValues(alpha: 0.35),
@@ -557,25 +759,36 @@ class _LeaderRatingPageState extends State<LeaderRatingPage> {
                       ]
                     : [],
               ),
-              child: const Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Text(
-                    'Done — Start Member Rating',
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontWeight: FontWeight.w800,
-                      fontSize: 16,
+              child: _isSaving
+                  ? const Center(
+                      child: SizedBox(
+                        height: 22,
+                        width: 22,
+                        child: CircularProgressIndicator(
+                          color: Colors.white,
+                          strokeWidth: 2.5,
+                        ),
+                      ),
+                    )
+                  : const Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Text(
+                          'Done — Start Member Rating',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.w800,
+                            fontSize: 16,
+                          ),
+                        ),
+                        SizedBox(width: 8),
+                        Icon(
+                          Icons.arrow_forward_rounded,
+                          color: Colors.white,
+                          size: 20,
+                        ),
+                      ],
                     ),
-                  ),
-                  SizedBox(width: 8),
-                  Icon(
-                    Icons.arrow_forward_rounded,
-                    color: Colors.white,
-                    size: 20,
-                  ),
-                ],
-              ),
             ),
           ),
           const SizedBox(height: 16),
@@ -617,11 +830,11 @@ class _LeaderRatingPageState extends State<LeaderRatingPage> {
 
   Color _difficultyColor(int val) {
     const colors = [
-      Color(0xFF2D9E7E), // 1 - Very Easy
-      Color(0xFF7EC8E3), // 2 - Easy
-      Color(0xFFFFD166), // 3 - Moderate
-      Color(0xFFFF8C69), // 4 - Hard
-      Color(0xFFB5A4E8), // 5 - Very Hard
+      Color(0xFF2D9E7E),
+      Color(0xFF7EC8E3),
+      Color(0xFFFFD166),
+      Color(0xFFFF8C69),
+      Color(0xFFB5A4E8),
     ];
     return colors[(val - 1).clamp(0, 4)];
   }

@@ -4,6 +4,7 @@ import 'dashboard_page.dart';
 
 class ResultsPage extends StatelessWidget {
   final String groupName;
+  final String projectId;
   final List<String> members;
   final List<String> tasks;
   final List<List<double>> shapleyScores;
@@ -14,6 +15,7 @@ class ResultsPage extends StatelessWidget {
   const ResultsPage({
     super.key,
     required this.groupName,
+    required this.projectId,
     required this.members,
     required this.tasks,
     required this.shapleyScores,

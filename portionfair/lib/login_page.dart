@@ -2,11 +2,9 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'home.dart';
-import 'task.dart'; // Imports shared colors
+import 'task.dart';
 
-// ── Change this to your machine's IP if running on a real device ──
-const String kBaseUrl = 'http://localhost:3000'; // Android emulator → localhost
-// const String kBaseUrl = 'http://localhost:3000'; // iOS simulator / web
+const String kBaseUrl = 'http://localhost:3000';
 
 class LoginPage extends StatefulWidget {
   const LoginPage({super.key});
@@ -20,7 +18,6 @@ class _LoginPageState extends State<LoginPage> {
   bool _obscure = true;
   bool _isLoading = false;
 
-  // ── LOGIN ────────────────────────────────────────────────────────
   Future<void> _handleLogin() async {
     final username = _usernameCtrl.text.trim();
     final password = _passwordCtrl.text.trim();
@@ -42,11 +39,11 @@ class _LoginPageState extends State<LoginPage> {
       final data = jsonDecode(response.body);
 
       if (response.statusCode == 200) {
-        // Navigate to Home — pass user info if needed
         if (!mounted) return;
+        // ✅ Pass username to HomePage
         Navigator.pushReplacement(
           context,
-          MaterialPageRoute(builder: (_) => const HomePage()),
+          MaterialPageRoute(builder: (_) => HomePage()),
         );
       } else {
         _showSnack(data['message'] ?? 'Login failed. Try again.');
@@ -58,7 +55,6 @@ class _LoginPageState extends State<LoginPage> {
     }
   }
 
-  // ── REGISTER ─────────────────────────────────────────────────────
   Future<void> _handleRegister() async {
     final username = _usernameCtrl.text.trim();
     final password = _passwordCtrl.text.trim();
@@ -80,7 +76,6 @@ class _LoginPageState extends State<LoginPage> {
       final data = jsonDecode(response.body);
 
       if (response.statusCode == 201) {
-        // Auto-login after successful registration
         _showSnack('Account created! Logging you in… ✅');
         await Future.delayed(const Duration(milliseconds: 800));
         await _handleLogin();
@@ -118,7 +113,6 @@ class _LoginPageState extends State<LoginPage> {
         child: SingleChildScrollView(
           child: Column(
             children: [
-              // ── Header ─────────────────────────────────────────
               Container(
                 width: double.infinity,
                 height: 220,
@@ -169,8 +163,6 @@ class _LoginPageState extends State<LoginPage> {
                   ],
                 ),
               ),
-
-              // ── Form ───────────────────────────────────────────
               Padding(
                 padding: const EdgeInsets.fromLTRB(28, 36, 28, 24),
                 child: Column(
@@ -190,7 +182,6 @@ class _LoginPageState extends State<LoginPage> {
                       style: TextStyle(color: kTextMid, fontSize: 14),
                     ),
                     const SizedBox(height: 32),
-
                     _fieldLabel('Username'),
                     const SizedBox(height: 8),
                     _inputField(
@@ -199,7 +190,6 @@ class _LoginPageState extends State<LoginPage> {
                       icon: Icons.person_outline_rounded,
                     ),
                     const SizedBox(height: 18),
-
                     _fieldLabel('Password'),
                     const SizedBox(height: 8),
                     _inputField(
@@ -218,21 +208,7 @@ class _LoginPageState extends State<LoginPage> {
                         onPressed: () => setState(() => _obscure = !_obscure),
                       ),
                     ),
-                    const SizedBox(height: 8),
-                    Align(
-                      alignment: Alignment.centerRight,
-                      child: Text(
-                        'Forgot password?',
-                        style: TextStyle(
-                          color: kPrimary.withValues(alpha: 0.8),
-                          fontSize: 13,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ),
                     const SizedBox(height: 28),
-
-                    // ── Login button ────────────────────────────
                     GestureDetector(
                       onTap: _isLoading ? null : _handleLogin,
                       child: Container(
@@ -274,10 +250,7 @@ class _LoginPageState extends State<LoginPage> {
                               ),
                       ),
                     ),
-
                     const SizedBox(height: 24),
-
-                    // ── Sign up link ────────────────────────────
                     Center(
                       child: GestureDetector(
                         onTap: _isLoading ? null : _handleRegister,

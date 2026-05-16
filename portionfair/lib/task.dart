@@ -1,5 +1,8 @@
+import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
 import 'leader_rating_page.dart';
+import 'login_page.dart'; // for kBaseUrl
 
 // ─── Shared Palette (Single Source of Truth) ──────────────────────────────────
 const kBg = Color(0xFFFFF8F0);
@@ -26,14 +29,14 @@ const _avatarColors = [
 Color getAvatarColor(int i) => _avatarColors[i % _avatarColors.length];
 
 const _suggestedTasks = [
-  'Research & Data Gathering 📚',
-  'Writing & Documentation ✍️',
-  'Presentation Slides 📊',
-  'Editing & Proofreading 🔍',
-  'Coding / Programming 💻',
-  'Design & Visuals 🎨',
-  'Testing & QA 🧪',
-  'Project Management 🗂️',
+  'Research & Data Gathering',
+  'Writing & Documentation',
+  'Presentation Slides',
+  'Editing & Proofreading',
+  'Coding / Programming',
+  'Design & Visuals',
+  'Testing & QA',
+  'Project Management',
 ];
 
 // ─── Shared Stepper Widget ────────────────────────────────────────────────────
@@ -152,7 +155,8 @@ class _TaskSetupPageState extends State<TaskSetupPage> {
   final List<String> _members = [];
   final List<String> _tasks = [];
 
-  DateTime? _deadline; // nullable — no default
+  DateTime? _deadline;
+  bool _isLoading = false; // ← NEW: loading state for API calls
 
   void _addMember() {
     final v = _memberCtrl.text.trim();
@@ -165,7 +169,16 @@ class _TaskSetupPageState extends State<TaskSetupPage> {
 
   void _addTask([String? preset]) {
     final v = preset ?? _taskCtrl.text.trim();
-    if (v.isEmpty || _tasks.contains(v)) return;
+    if (v.isEmpty) {
+      _snack('Type a task name first! 📋');
+      return;
+    }
+    if (_tasks.contains(v)) {
+      _snack('"$v" is already in the list!');
+      return;
+    }
+    // Dismiss keyboard before updating list
+    FocusManager.instance.primaryFocus?.unfocus();
     setState(() => _tasks.add(v));
     _taskCtrl.clear();
   }
@@ -194,7 +207,8 @@ class _TaskSetupPageState extends State<TaskSetupPage> {
     if (picked != null) setState(() => _deadline = picked);
   }
 
-  void _startRating() {
+  // ─── UPDATED: _startRating now saves to DB first ──────────────────────────
+  Future<void> _startRating() async {
     if (_groupCtrl.text.trim().isEmpty) {
       _snack('Please enter a group name! 🏷️');
       return;
@@ -207,18 +221,77 @@ class _TaskSetupPageState extends State<TaskSetupPage> {
       _snack('Add at least one task! 📋');
       return;
     }
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (_) => LeaderRatingPage(
-          groupName: _groupCtrl.text.trim(),
-          leaderName: _members.first, // first member = leader
-          members: List.from(_members),
-          tasks: List.from(_tasks),
-          deadline: _deadline, // nullable — optional
+
+    setState(() => _isLoading = true);
+
+    try {
+      // 1. Create project in DB
+      final projRes = await http.post(
+        Uri.parse('$kBaseUrl/projects'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({'project_name': _groupCtrl.text.trim()}),
+      );
+      if (projRes.statusCode != 201) {
+        _snack('Failed to create project. Try again.');
+        return;
+      }
+      final String projectId = jsonDecode(projRes.body)['project_id'];
+
+      // 2. Add each member to DB, collect their IDs
+      final List<String> memberIds = [];
+      for (final name in _members) {
+        final mRes = await http.post(
+          Uri.parse('$kBaseUrl/projects/$projectId/members'),
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode({'name': name}),
+        );
+        if (mRes.statusCode != 201) {
+          final errMsg = jsonDecode(mRes.body)['message'] ?? 'unknown error';
+          _snack('Failed to add member "$name": $errMsg');
+          return;
+        }
+        memberIds.add(jsonDecode(mRes.body)['member_id']);
+      }
+
+      // 3. Add each task to DB, collect their IDs
+      final List<String> taskIds = [];
+      for (final taskName in _tasks) {
+        final tRes = await http.post(
+          Uri.parse('$kBaseUrl/projects/$projectId/tasks'),
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode({'task_name': taskName}),
+        );
+        if (tRes.statusCode != 201) {
+          final errMsg = jsonDecode(tRes.body)['message'] ?? 'unknown error';
+          _snack('Failed to add task "$taskName": $errMsg');
+          return;
+        }
+        taskIds.add(jsonDecode(tRes.body)['task_id']);
+      }
+
+      if (!mounted) return;
+
+      // Navigate with DB IDs now attached
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => LeaderRatingPage(
+            groupName: _groupCtrl.text.trim(),
+            leaderName: _members.first,
+            members: List.from(_members),
+            tasks: List.from(_tasks),
+            deadline: _deadline,
+            projectId: projectId,
+            memberIds: memberIds,
+            taskIds: taskIds,
+          ),
         ),
-      ),
-    );
+      );
+    } catch (e) {
+      _snack('Cannot reach server. Check your connection. 😕');
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
+    }
   }
 
   void _snack(String msg) {
@@ -597,12 +670,12 @@ class _TaskSetupPageState extends State<TaskSetupPage> {
         mainAxisSize: MainAxisSize.min,
         children: [
           GestureDetector(
-            onTap: _startRating,
+            onTap: _isLoading ? null : _startRating,
             child: Container(
               width: double.infinity,
               padding: const EdgeInsets.symmetric(vertical: 18),
               decoration: BoxDecoration(
-                color: kPrimary,
+                color: _isLoading ? kPrimary.withValues(alpha: 0.6) : kPrimary,
                 borderRadius: BorderRadius.circular(16),
                 boxShadow: [
                   BoxShadow(
@@ -612,25 +685,36 @@ class _TaskSetupPageState extends State<TaskSetupPage> {
                   ),
                 ],
               ),
-              child: const Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Text(
-                    'Start Rating',
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontWeight: FontWeight.w800,
-                      fontSize: 16,
+              child: _isLoading
+                  ? const Center(
+                      child: SizedBox(
+                        height: 22,
+                        width: 22,
+                        child: CircularProgressIndicator(
+                          color: Colors.white,
+                          strokeWidth: 2.5,
+                        ),
+                      ),
+                    )
+                  : const Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Text(
+                          'Start Rating',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.w800,
+                            fontSize: 16,
+                          ),
+                        ),
+                        SizedBox(width: 8),
+                        Icon(
+                          Icons.arrow_forward_rounded,
+                          color: Colors.white,
+                          size: 20,
+                        ),
+                      ],
                     ),
-                  ),
-                  SizedBox(width: 8),
-                  Icon(
-                    Icons.arrow_forward_rounded,
-                    color: Colors.white,
-                    size: 20,
-                  ),
-                ],
-              ),
             ),
           ),
           const SizedBox(height: 16),
